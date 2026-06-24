@@ -1,1 +1,389 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- Cấu hình mặc định
+local ESP = false
+local AIMBOT = false
+local IS_SHOOTING = false
+local MENU_COLLAPSED = false
+local MAX_ESP_DISTANCE = 600 -- Giới hạn 600m
+
+-- Bộ nhớ đệm lưu Highlight ESP của từng player
+local CacheHighlight = {}
+
+-- --- HỆ THỐNG ÂM THANH (POP / PIP) MƯỢT MÀ ---
+local function PlaySound(soundType)
+    local sound = Instance.new("Sound")
+    sound.SoundId = "rbxassetid://12221967" -- Sử dụng âm thanh click cơ bản hệ thống
+    sound.Volume = 0.5
+    
+    if soundType == "pop" then
+        sound.PlaybackSpeed = 1.2 -- Tiếng Pop trầm, nảy khi bấm nút chức năng
+    elseif soundType == "pip" then
+        sound.PlaybackSpeed = 2.0 -- Tiếng Pip thanh, cao khi thu gọn menu
+    end
+    
+    sound.Parent = game:GetService("SoundService")
+    sound:Play()
+    sound.Ended:Connect(function() sound:Destroy() end)
+end
+
+-- --- KHỞI TẠO VÒNG TRÒN FOV (MÀU ĐỎ) ---
+local Circle = Drawing.new("Circle")
+Circle.Visible = false
+Circle.Color = Color3.fromRGB(255, 50, 50)
+Circle.Thickness = 1.5
+Circle.NumSides = 100
+Circle.Filled = false
+Circle.Radius = 120 
+
+-- ====================================================================
+-- 1. KHỞI TẠO INTERFACE MENU CHUYÊN NGHIỆP + ANIMATION
+-- ====================================================================
+local gui = Instance.new("ScreenGui")
+gui.Name = "Premium_Combat_Menu"
+gui.ResetOnSpawn = false
+gui.Parent = game.CoreGui
+
+local menuFrame = Instance.new("Frame")
+menuFrame.Name = "MainFrame"
+menuFrame.Size = UDim2.new(0, 140, 0, 165)
+menuFrame.Position = UDim2.new(0, 15, 0, 150)
+menuFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+menuFrame.BorderSizePixel = 0
+menuFrame.Active = true
+menuFrame.ClipsDescendants = true -- Để che phần nút khi co menu lại
+menuFrame.Parent = gui
+
+local menuCorner = Instance.new("UICorner")
+menuCorner.CornerRadius = UDim.new(0, 8)
+menuCorner.Parent = menuFrame
+
+local menuStroke = Instance.new("UIStroke")
+menuStroke.Thickness = 1.5
+menuStroke.Color = Color3.fromRGB(60, 60, 60)
+menuStroke.Parent = menuFrame
+
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = menuFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = titleBar
+
+local titleText = Instance.new("TextLabel")
+titleText.Size = UDim2.new(1, -35, 1, 0)
+titleText.Position = UDim2.new(0, 10, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "COMBAT MENU"
+titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleText.Font = Enum.Font.SourceSansBold
+titleText.TextSize = 13
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+titleText.Parent = titleBar
+
+local collapseBtn = Instance.new("TextButton")
+collapseBtn.Name = "CollapseBtn"
+collapseBtn.Size = UDim2.new(0, 25, 0, 20)
+collapseBtn.Position = UDim2.new(1, -30, 0, 5)
+collapseBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+collapseBtn.Text = "-"
+collapseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+collapseBtn.Font = Enum.Font.SourceSansBold
+collapseBtn.TextSize = 14
+collapseBtn.Parent = titleBar
+
+local collapseCorner = Instance.new("UICorner")
+collapseCorner.CornerRadius = UDim.new(0, 4)
+collapseCorner.Parent = collapseBtn
+
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -30)
+contentFrame.Position = UDim2.new(0, 0, 0, 30)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = menuFrame
+
+local function MakeDraggable(dragObj, mainObj)
+    local dragging, dragStart, startPos
+    dragObj.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainObj.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    dragObj.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            mainObj.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+MakeDraggable(titleBar, menuFrame)
+
+-- ANIMATION THU GỌN / MỞ RỘNG MENU (TIẾNG PIP)
+collapseBtn.MouseButton1Click:Connect(function()
+    MENU_COLLAPSED = not MENU_COLLAPSED
+    PlaySound("pip") -- Phát tiếng Pip bíp bíp mượt mà
+    
+    local targetSize = MENU_COLLAPSED and UDim2.new(0, 140, 0, 30) or UDim2.new(0, 140, 0, 165)
+    collapseBtn.Text = MENU_COLLAPSED and "+" or "-"
+    
+    local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+    TweenService:Create(menuFrame, tweenInfo, {Size = targetSize}):Play()
+end)
+
+-- ====================================================================
+-- 2. TẠO NÚT CHỨC NĂNG + ANIMATION TƯƠNG TÁC NÚT (TIẾNG POP)
+-- ====================================================================
+local function CreateMenuButton(name, text, color, position)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Size = UDim2.new(1, -20, 0, 32)
+    btn.Position = position
+    btn.BackgroundColor3 = color
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 13
+    btn.Parent = contentFrame
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 6)
+    btnCorner.Parent = btn
+
+    -- Hiệu ứng phóng to nhẹ khi di ngón tay/chuột vào nút (Hover Anim)
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(1, -14, 0, 34),
+            Position = position + UDim2.new(0, -3, 0, -1)
+        }):Play()
+    end)
+
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(1, -20, 0, 32),
+            Position = position
+        }):Play()
+    end)
+    
+    return btn
+end
+
+local espBtn = CreateMenuButton("ESP_Btn", "ESP: OFF", Color3.fromRGB(140, 30, 30), UDim2.new(0, 10, 0, 10))
+local aimBtn = CreateMenuButton("Aim_Btn", "AIMBOT: OFF", Color3.fromRGB(140, 30, 30), UDim2.new(0, 10, 0, 50))
+
+local sizeLabel = Instance.new("TextLabel")
+sizeLabel.Size = UDim2.new(0, 60, 0, 25)
+sizeLabel.Position = UDim2.new(0, 10, 0, 92)
+sizeLabel.BackgroundTransparency = 1
+sizeLabel.Text = "FOV Size:"
+sizeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+sizeLabel.Font = Enum.Font.SourceSansBold
+sizeLabel.TextSize = 12
+sizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+sizeLabel.Parent = contentFrame
+
+local fovInput = Instance.new("TextBox")
+fovInput.Name = "Fov_Input"
+fovInput.Size = UDim2.new(1, -80, 0, 25)
+fovInput.Position = UDim2.new(0, 70, 0, 92)
+fovInput.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+fovInput.Text = tostring(Circle.Radius)
+fovInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovInput.Font = Enum.Font.SourceSansBold
+fovInput.TextSize = 12
+fovInput.Parent = contentFrame
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(0, 4)
+fovCorner.Parent = fovInput
+
+fovInput.FocusLost:Connect(function(enterPressed)
+    local num = tonumber(fovInput.Text)
+    if num then
+        Circle.Radius = math.clamp(num, 5, 800)
+        fovInput.Text = tostring(Circle.Radius)
+    else
+        fovInput.Text = tostring(Circle.Radius)
+    end
+end)
+
+local function ClearPlayerHighlight(player)
+    if CacheHighlight[player] then
+        pcall(function() CacheHighlight[player]:Destroy() end)
+        CacheHighlight[player] = nil
+    end
+end
+
+-- CLICK ESP NÚT (TIẾNG POP)
+espBtn.MouseButton1Click:Connect(function()
+    ESP = not ESP
+    PlaySound("pop") -- Âm thanh nảy Pop vui tai
+    espBtn.Text = ESP and "ESP: ON" or "ESP: OFF"
+    
+    local targetColor = ESP and Color3.fromRGB(30, 130, 30) or Color3.fromRGB(140, 30, 30)
+    TweenService:Create(espBtn, TweenInfo.new(0.2), {BackgroundColor3 = targetColor}):Play()
+    
+    if not ESP then
+        for p, _ in pairs(CacheHighlight) do ClearPlayerHighlight(p) end
+    end
+end)
+
+-- CLICK AIMBOT NÚT (TIẾNG POP)
+aimBtn.MouseButton1Click:Connect(function()
+    AIMBOT = not AIMBOT
+    PlaySound("pop") -- Âm thanh nảy Pop vui tai
+    aimBtn.Text = AIMBOT and "AIMBOT: ON" or "AIMBOT: OFF"
+    
+    local targetColor = AIMBOT and Color3.fromRGB(30, 130, 30) or Color3.fromRGB(140, 30, 30)
+    TweenService:Create(aimBtn, TweenInfo.new(0.2), {BackgroundColor3 = targetColor}):Play()
+    
+    if not AIMBOT and IS_SHOOTING then IS_SHOOTING = false end
+end)
+
+Players.PlayerRemoving:Connect(ClearPlayerHighlight)
+
+-- ====================================================================
+-- 3. HỆ THỐNG HIGHLIGHT ESP XUYÊN TƯỜNG (DƯỚI 600M) & AIMBOT MƯỢT
+-- ====================================================================
+local function MobileFire(state)
+    local center = Vector3.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2, 0)
+    local touchObject = Instance.new("InputObject")
+    pcall(function()
+        local raw = getmetatable(touchObject)
+        if raw then
+            raw.UserInputType = Enum.UserInputType.Touch
+            raw.UserInputState = state
+            raw.Position = center
+        end
+    end)
+    UserInputService.InputBegan:Fire(touchObject, false)
+end
+
+local function IsBehindWall(targetPart, targetCharacter)
+    if not targetPart or not targetPart:IsDescendantOf(workspace) or not targetCharacter then return true end
+    local myChar = LocalPlayer.Character
+    if not myChar then return true end
+
+    local origin = Camera.CFrame.Position
+    local direction = targetPart.Position - origin
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterDescendantsInstances = {myChar, gui, workspace:FindFirstChild("ViewModel")}
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.IgnoreWater = true
+
+    local success, raycastResult = pcall(function()
+        return workspace:Raycast(origin, direction, raycastParams)
+    end)
+
+    if success and raycastResult then
+        local hit = raycastResult.Instance
+        if hit and not hit:IsDescendantOf(targetCharacter) then
+            if hit.CanCollide == true and hit.Transparency < 0.7 then return true end
+        end
+    end
+    return false 
+end
+
+RunService.RenderStepped:Connect(function()
+    local myChar = LocalPlayer.Character
+    local Viewport = Camera.ViewportSize
+    local center = Vector2.new(Viewport.X / 2, Viewport.Y / 2)  
+    local aimTarget = nil
+    local shortestDistance = math.huge  
+
+    Circle.Position = center
+    Circle.Visible = AIMBOT
+
+    for _, p in pairs(Players:GetPlayers()) do  
+        if p ~= LocalPlayer and p.Character then
+            local char = p.Character
+            local hitPart = char:FindFirstChild("HitboxHead") or char:FindFirstChild("HitboxBody") or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head") or char.PrimaryPart
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+            
+            local isAlive = false
+            if humanoid then isAlive = humanoid.Health > 0
+            elseif hitPart then isAlive = hitPart:IsDescendantOf(workspace) end
+            
+            local currentDistance = hitPart and (Camera.CFrame.Position - hitPart.Position).Magnitude or math.huge
+            
+            -- --- ĐỔI SANG HIGHLIGHT ESP SIÊU ĐẸP, MƯỢT, KHÔNG LỖI BOX ---
+            if ESP and isAlive and currentDistance <= MAX_ESP_DISTANCE then
+                if not CacheHighlight[p] then
+                    local hl = Instance.new("Highlight")
+                    hl.Name = "ESP_Highlight_" .. p.Name
+                    hl.FillColor = Color3.fromRGB(255, 50, 50)
+                    hl.FillTransparency = 0.6 -- Độ đậm nhạt màu thân người
+                    hl.OutlineColor = Color3.fromRGB(255, 255, 255) -- Viền trắng phát sáng ngoài
+                    hl.OutlineTransparency = 0.1
+                    hl.Adornee = char
+                    hl.Parent = gui -- Để an toàn, quản lý tập trung tại Gui
+                    CacheHighlight[p] = hl
+                else
+                    -- Luôn gán lại Adornee phòng trường hợp địch hồi sinh đổi model
+                    CacheHighlight[p].Adornee = char
+                    CacheHighlight[p].Enabled = true
+                end
+            else
+                if CacheHighlight[p] then
+                    CacheHighlight[p].Enabled = false
+                end
+            end
+            
+            -- --- LOCK DUY NHẤT PLAYER CHỐNG GIẬT ---
+            if AIMBOT and hitPart and isAlive and myChar then
+                local pos, visibleOnScreen = false, false
+                pcall(function() pos, visibleOnScreen = Camera:WorldToViewportPoint(hitPart.Position) end)
+
+                if visibleOnScreen and pos then  
+                    local pixelDistance = (Vector2.new(pos.X, pos.Y) - center).Magnitude  
+                    if pixelDistance < Circle.Radius and pixelDistance < shortestDistance then  
+                        if not IsBehindWall(hitPart, char) then
+                            shortestDistance = pixelDistance  
+                            aimTarget = hitPart  
+                        end
+                    end
+                end  
+            end
+        else
+            ClearPlayerHighlight(p)
+        end  
+    end  
+
+    -- --- CƠ CHẾ AIM CHỐNG GIẬT CAMERA MƯỢT 100% ---
+    if AIMBOT and aimTarget and aimTarget:IsDescendantOf(workspace) then  
+        pcall(function()
+            local camCFrame = Camera.CFrame
+            local targetPos = aimTarget.Position
+            local lookAtTarget = CFrame.lookAt(camCFrame.Position, targetPos)
+            
+            -- Đồng bộ dạng xoay (Rotation) triệt tiêu độ rung giật màn hình
+            Camera.CFrame = CFrame.new(camCFrame.Position) * lookAtTarget.Rotation
+        end)
+        
+        if not IS_SHOOTING then
+            IS_SHOOTING = true
+            MobileFire(Enum.UserInputState.Begin)
+        end
+    else
+        if IS_SHOOTING then
+            IS_SHOOTING = false
+            MobileFire(Enum.UserInputState.End)
+        end
+    end
+end)
 
